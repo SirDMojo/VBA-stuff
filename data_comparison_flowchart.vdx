@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<VisioDocument xmlns="http://schemas.microsoft.com/visio/2003">
+    <Page>
+        <Shapes>
+            <Shape id="1" type="oval" label="Start" />
+            <Shape id="2" type="rectangle" label="Process Step 1" />
+            <Shape id="3" type="diamond" label="Decision Point 1" color="yellow" />
+            <Shape id="4" type="rectangle" label="Process Step 2" />
+            <Shape id="5" type="oval" label="End" />
+            <!-- Additional shapes and connections here -->
+        </Shapes>
+        <Connectors>
+            <Connector from="1" to="2" />
+            <Connector from="2" to="3" />
+            <Connector from="3" to="4" />
+            <Connector from="4" to="5" />
+            <!-- Additional connectors here -->
+        </Connectors>
+    </Page>
+</VisioDocument>
