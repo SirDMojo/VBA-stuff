@@ -61,10 +61,10 @@ Public wb2 As Workbook
 Public ws1 As Worksheet
 Public ws2 As Worksheet
 
-Public keyColumnNames() As String
-Public attributeColumnNames() As String
-Public keyColumnIndices() As Long
-Public attributeColumnIndices() As Long
+Private keyColumnNames() As String
+Private attributeColumnNames() As String
+Private keyColumnIndices() As Long
+Private attributeColumnIndices() As Long
 
 Public reportData As New Collection
 Public matchedRecords As New Collection
