@@ -1,44 +1,53 @@
-' XLS FILE COMPARATOR - VBA Module
-' Purpose: Compare two XLS files and generate detailed comparison reports
-' Usage: Run CompareXLSFiles() subroutine
+' XLS FILE COMPARATOR WITH KEY-BASED MATCHING - VBA Module
+' + ' Purpose: Compare two XLS files using key columns and compare cohering attributes
+' + ' Usage: Run CompareXLSFilesWithKeys() subroutine
+' + ' Features: Matches rows by key columns, compares attributes for matching keys
 
 Option Explicit
 
-' ============================================================================
-' MAIN SUBROUTINE - START HERE
-' ============================================================================
+' + '
+' + ' ============================================================================
+' + ' MAIN SUBROUTINE - START HERE
+' + ' ============================================================================
 
-Sub CompareXLSFiles()
-    '
-    ' Main procedure to compare two XLS files
-    ' Modify file paths before running
-    '
+Sub CompareXLSFilesWithKeys()
+    
+    ' Main procedure to compare two XLS files using key-based matching
+    ' Configure file paths and key columns before running
     
     Dim file1Path As String
     Dim file2Path As String
     Dim outputPath As String
+    Dim keyColumns As String
+    Dim attributeColumns As String
     
-    ' CONFIGURE THESE PATHS:
+    ' CONFIGURE THESE PATHS AND COLUMNS:
     file1Path = "C:\Users\YourName\Documents\file1.xlsx"
     file2Path = "C:\Users\YourName\Documents\file2.xlsx"
     outputPath = "C:\Users\YourName\Documents\comparison_report.txt"
     
+    ' Key columns (comma-separated, case-sensitive): Used to match records
+    keyColumns = "ID,Product"
+    
+    ' Attribute columns (comma-separated): Columns to compare for matching keys
+    attributeColumns = "Price,Quantity,Status,LastUpdated"
+    
     ' Run comparison
     Dim comparator As New XLSComparator
-    comparator.CompareFiles file1Path, file2Path, outputPath
+    comparator.CompareFilesWithKeys file1Path, file2Path, outputPath, keyColumns, attributeColumns
     
     MsgBox "Comparison complete! Report saved to:" & vbCrLf & outputPath, vbInformation, "Comparison Complete"
     
 End Sub
 
-' ============================================================================
-' CLASS MODULE: XLSComparator
-' ============================================================================
+' + ' ============================================================================
+' + ' CLASS MODULE: XLSComparator
+' + ' ============================================================================
 
-' Insert this as a CLASS MODULE (not a standard module)
-' Right-click in Project Explorer > Insert > Class Module > Name it "XLSComparator"
+' + ' Insert this as a CLASS MODULE (not a standard module)
+' + ' Right-click in Project Explorer > Insert > Class Module > Name it "XLSComparator"
 
-'---BEGIN CLASS MODULE CODE---
+' + ' ---BEGIN CLASS MODULE CODE---
 
 Option Explicit
 
@@ -52,11 +61,16 @@ Public wb2 As Workbook
 Public ws1 As Worksheet
 Public ws2 As Worksheet
 
+Public keyColumnNames() As String
+Public attributeColumnNames() As String
+Public keyColumnIndices() As Long
+Public attributeColumnIndices() As Long
+
 Public reportData As New Collection
-Public schemaData As New Collection
-Public missingRowsFile1 As New Collection
-Public missingRowsFile2 As New Collection
-Public changedValues As New Collection
+Public matchedRecords As New Collection
+Public recordsOnlyInFile1 As New Collection
+Public recordsOnlyInFile2 As New Collection
+Public attributeDifferences As New Collection
 
 Private Function GetWorkbookName(filePath As String) As String
     Dim parts() As String
@@ -64,10 +78,28 @@ Private Function GetWorkbookName(filePath As String) As String
     GetWorkbookName = parts(UBound(parts))
 End Function
 
-Public Sub CompareFiles(path1 As String, path2 As String, outputPath As String)
-    '
-    ' Main comparison procedure
-    '
+Private Function SplitColumns(columnString As String) As String()
+    
+    ' Split comma-separated column names into array
+    
+    Dim parts() As String
+    Dim result() As String
+    Dim i As Long
+    Dim cleanedParts() As String
+    
+    parts = Split(columnString, ",")
+    ReDim cleanedParts(LBound(parts) To UBound(parts))
+    
+    For i = LBound(parts) To UBound(parts)
+        cleanedParts(i) = Trim(parts(i))
+    Next i
+    
+    SplitColumns = cleanedParts
+End Function
+
+Public Sub CompareFilesWithKeys(path1 As String, path2 As String, outputPath As String, keys As String, attributes As String)
+    
+    ' Main comparison procedure using key-based matching
     
     On Error GoTo ErrorHandler
     
@@ -76,14 +108,21 @@ Public Sub CompareFiles(path1 As String, path2 As String, outputPath As String)
     file1Name = GetWorkbookName(path1)
     file2Name = GetWorkbookName(path2)
     
+    ' Parse column names
+    keyColumnNames = SplitColumns(keys)
+    attributeColumnNames = SplitColumns(attributes)
+    
     ' Load files
     If Not LoadFiles() Then Exit Sub
     
-    ' Run all comparisons
+    ' Find column indices
+    If Not FindColumnIndices() Then Exit Sub
+    
+    ' Run key-based comparison
     Call CompareSchemas
     Call CompareDimensions
-    Call FindMissingRows
-    Call FindChangedValues
+    Call FindMatchingRecords
+    Call FindDifferentAttributes
     
     ' Generate reports
     Call GenerateSummaryReport(outputPath)
@@ -99,9 +138,8 @@ ErrorHandler:
 End Sub
 
 Private Function LoadFiles() As Boolean
-    '
+    
     ' Load both XLS files
-    '
     
     On Error GoTo ErrorHandler
     
@@ -120,10 +158,88 @@ ErrorHandler:
     LoadFiles = False
 End Function
 
+Private Function FindColumnIndices() As Boolean
+    
+    ' Find the column indices for key and attribute columns
+    
+    Dim i As Long, j As Long
+    Dim col As Long
+    Dim lastCol As Long: lastCol = GetLastColumn(ws1)
+    Dim found As Boolean
+    Dim colName As String
+    
+    ' Find key column indices
+    ReDim keyColumnIndices(LBound(keyColumnNames) To UBound(keyColumnNames))
+    For i = LBound(keyColumnNames) To UBound(keyColumnNames)
+        found = False
+        For col = 1 To lastCol
+            colName = CStr(ws1.Cells(1, col).Value)
+            If colName = keyColumnNames(i) Then
+                keyColumnIndices(i) = col
+                found = True
+                Exit For
+            End If
+        Next col
+        If Not found Then
+            MsgBox "Key column '" & keyColumnNames(i) & "' not found in " & file1Name, vbCritical, "Column Not Found"
+            FindColumnIndices = False
+            Exit Function
+        End If
+    Next i
+    
+    ' Find attribute column indices
+    ReDim attributeColumnIndices(LBound(attributeColumnNames) To UBound(attributeColumnNames))
+    For i = LBound(attributeColumnNames) To UBound(attributeColumnNames)
+        found = False
+        For col = 1 To lastCol
+            colName = CStr(ws1.Cells(1, col).Value)
+            If colName = attributeColumnNames(i) Then
+                attributeColumnIndices(i) = col
+                found = True
+                Exit For
+            End If
+        Next col
+        If Not found Then
+            MsgBox "Attribute column '" & attributeColumnNames(i) & "' not found in " & file1Name, vbCritical, "Column Not Found"
+            FindColumnIndices = False
+            Exit Function
+        End If
+    Next i
+    
+    FindColumnIndices = True
+End Function
+
+Private Function GetKeyValue(ws As Worksheet, rowNum As Long) As String
+    
+    ' Get concatenated key value for a row
+    
+    Dim i As Long
+    Dim keyValue As String: keyValue = ""
+    
+    For i = LBound(keyColumnIndices) To UBound(keyColumnIndices)
+        keyValue = keyValue & "|" & CStr(ws.Cells(rowNum, keyColumnIndices(i)).Value)
+    Next i
+    
+    GetKeyValue = keyValue
+End Function
+
+Private Function GetAttributeValues(ws As Worksheet, rowNum As Long) As Collection
+    
+    ' Get all attribute values for a row
+    
+    Dim result As New Collection
+    Dim i As Long
+    
+    For i = LBound(attributeColumnIndices) To UBound(attributeColumnIndices)
+        result.Add CStr(ws.Cells(rowNum, attributeColumnIndices(i)).Value)
+    Next i
+    
+    Set GetAttributeValues = result
+End Function
+
 Private Sub CompareSchemas()
-    '
-    ' Compare table schemas (columns, data types)
-    '
+    
+    ' Compare table schemas (columns)
     
     Dim col1 As Long, col2 As Long
     Dim cols1 As Collection, cols2 As Collection
@@ -137,53 +253,18 @@ Private Sub CompareSchemas()
     reportData.Add "================================================================"
     reportData.Add ""
     
-    ' Common columns
-    reportData.Add "Common Columns: " & cols1.Count
-    For i = 1 To cols1.Count
-        foundCol = False
-        For j = 1 To cols2.Count
-            If cols1(i) = cols2(j) Then
-                foundCol = True
-                Exit For
-            End If
-        Next j
-        If foundCol Then
-            reportData.Add "  - " & cols1(i)
-        End If
+    ' Key Columns
+    reportData.Add "Key Columns:"
+    For i = LBound(keyColumnNames) To UBound(keyColumnNames)
+        reportData.Add "  - " & keyColumnNames(i)
     Next i
     
     reportData.Add ""
     
-    ' Columns only in file 1
-    reportData.Add "Columns only in " & file1Name & ":"
-    For i = 1 To cols1.Count
-        foundCol = False
-        For j = 1 To cols2.Count
-            If cols1(i) = cols2(j) Then
-                foundCol = True
-                Exit For
-            End If
-        Next j
-        If Not foundCol Then
-            reportData.Add "  - " & cols1(i)
-        End If
-    Next i
-    
-    reportData.Add ""
-    
-    ' Columns only in file 2
-    reportData.Add "Columns only in " & file2Name & ":"
-    For i = 1 To cols2.Count
-        foundCol = False
-        For j = 1 To cols1.Count
-            If cols2(i) = cols1(j) Then
-                foundCol = True
-                Exit For
-            End If
-        Next j
-        If Not foundCol Then
-            reportData.Add "  - " & cols2(i)
-        End If
+    ' Attribute Columns
+    reportData.Add "Attribute Columns (for comparison):"
+    For i = LBound(attributeColumnNames) To UBound(attributeColumnNames)
+        reportData.Add "  - " & attributeColumnNames(i)
     Next i
     
     reportData.Add ""
@@ -191,9 +272,8 @@ Private Sub CompareSchemas()
 End Sub
 
 Private Sub CompareDimensions()
-    '
+    
     ' Compare table dimensions (rows and columns)
-    '
     
     Dim rows1 As Long, rows2 As Long
     Dim cols1 As Long, cols2 As Long
@@ -206,143 +286,144 @@ Private Sub CompareDimensions()
     reportData.Add "DIMENSIONS COMPARISON:"
     reportData.Add "================================================================"
     reportData.Add ""
-    reportData.Add file1Name & " Rows: " & rows1
-    reportData.Add file2Name & " Rows: " & rows2
-    reportData.Add "Row Difference: " & (rows2 - rows1)
-    reportData.Add ""
-    reportData.Add file1Name & " Columns: " & cols1
-    reportData.Add file2Name & " Columns: " & cols2
-    reportData.Add "Column Difference: " & (cols2 - cols1)
+    reportData.Add file1Name & " Data Rows: " & (rows1 - 1)
+    reportData.Add file2Name & " Data Rows: " & (rows2 - 1)
+    reportData.Add "Row Difference: " & ((rows2 - 1) - (rows1 - 1))
     reportData.Add ""
     
 End Sub
 
-Private Sub FindMissingRows()
-    '
-    ' Find rows that exist in one file but not the other
-    '
+Private Sub FindMatchingRecords()
+    
+    ' Find records with matching keys in both files
     
     Dim i As Long, j As Long
-    Dim row1Data As String, row2Data As String
-    Dim found As Boolean
     Dim rows1 As Long, rows2 As Long
+    Dim key1 As String, key2 As String
+    Dim found As Boolean
     
     rows1 = GetLastRow(ws1)
     rows2 = GetLastRow(ws2)
     
-    reportData.Add "MISSING ROWS ANALYSIS:"
+    reportData.Add "KEY-BASED MATCHING ANALYSIS:"
     reportData.Add "================================================================"
     reportData.Add ""
     
-    ' Find rows only in file1
-    Dim countFile1Only As Long: countFile1Only = 0
+    Dim matchedCount As Long: matchedCount = 0
+    Dim onlyInFile1Count As Long: onlyInFile1Count = 0
+    Dim onlyInFile2Count As Long: onlyInFile2Count = 0
+    
+    ' Find records only in file 1
     For i = 2 To rows1
-        row1Data = GetRowData(ws1, i)
+        key1 = GetKeyValue(ws1, i)
         found = False
         For j = 2 To rows2
-            row2Data = GetRowData(ws2, j)
-            If row1Data = row2Data Then
+            key2 = GetKeyValue(ws2, j)
+            If key1 = key2 Then
                 found = True
+                matchedCount = matchedCount + 1
+                matchedRecords.Add "File1_Row=" & i & "|File2_Row=" & j & "|Key=" & key1
                 Exit For
             End If
         Next j
         If Not found Then
-            countFile1Only = countFile1Only + 1
-            If countFile1Only <= 5 Then ' Show first 5
-                missingRowsFile1.Add "Row " & i & ": " & row1Data
+            onlyInFile1Count = onlyInFile1Count + 1
+            If onlyInFile1Count <= 5 Then
+                recordsOnlyInFile1.Add "Row " & i & " - Key: " & key1
             End If
         End If
     Next i
     
-    ' Find rows only in file2
-    Dim countFile2Only As Long: countFile2Only = 0
+    ' Find records only in file 2
     For j = 2 To rows2
-        row2Data = GetRowData(ws2, j)
+        key2 = GetKeyValue(ws2, j)
         found = False
         For i = 2 To rows1
-            row1Data = GetRowData(ws1, i)
-            If row1Data = row2Data Then
+            key1 = GetKeyValue(ws1, i)
+            If key1 = key2 Then
                 found = True
                 Exit For
             End If
         Next i
         If Not found Then
-            countFile2Only = countFile2Only + 1
-            If countFile2Only <= 5 Then ' Show first 5
-                missingRowsFile2.Add "Row " & j & ": " & row2Data
+            onlyInFile2Count = onlyInFile2Count + 1
+            If onlyInFile2Count <= 5 Then
+                recordsOnlyInFile2.Add "Row " & j & " - Key: " & key2
             End If
         End If
     Next j
     
-    reportData.Add "Rows only in " & file1Name & ": " & countFile1Only
-    For i = 1 To missingRowsFile1.Count
-        reportData.Add "  " & missingRowsFile1(i)
+    reportData.Add "Matched Records (same key): " & matchedCount
+    reportData.Add ""
+    reportData.Add "Records only in " & file1Name & ": " & onlyInFile1Count
+    For i = 1 To recordsOnlyInFile1.Count
+        reportData.Add "  " & recordsOnlyInFile1(i)
     Next i
-    If countFile1Only > 5 Then
-        reportData.Add "  ... and " & (countFile1Only - 5) & " more"
+    If onlyInFile1Count > 5 Then
+        reportData.Add "  ... and " & (onlyInFile1Count - 5) & " more"
     End If
     
     reportData.Add ""
     
-    reportData.Add "Rows only in " & file2Name & ": " & countFile2Only
-    For i = 1 To missingRowsFile2.Count
-        reportData.Add "  " & missingRowsFile2(i)
+    reportData.Add "Records only in " & file2Name & ": " & onlyInFile2Count
+    For i = 1 To recordsOnlyInFile2.Count
+        reportData.Add "  " & recordsOnlyInFile2(i)
     Next i
-    If countFile2Only > 5 Then
-        reportData.Add "  ... and " & (countFile2Only - 5) & " more"
+    If onlyInFile2Count > 5 Then
+        reportData.Add "  ... and " & (onlyInFile2Count - 5) & " more"
     End If
     
     reportData.Add ""
     
 End Sub
 
-Private Sub FindChangedValues()
-    '
-    ' Find rows with changed values
-    '
+Private Sub FindDifferentAttributes()
+    
+    ' Compare attributes for records with matching keys
     
     Dim i As Long, j As Long, k As Long
-    Dim rows1 As Long, rows2 As Long
-    Dim cols As Long
-    Dim changedCount As Long: changedCount = 0
-    Dim row1Data As String, row2Data As String
+    Dim matchInfo As String
+    Dim row1 As Long, row2 As Long
+    Dim matchArray() As String
+    Dim attrs1 As Collection, attrs2 As Collection
+    Dim diffCount As Long: diffCount = 0
     
-    rows1 = GetLastRow(ws1)
-    rows2 = GetLastRow(ws2)
-    cols = GetLastColumn(ws1)
-    
-    reportData.Add "CHANGED VALUES ANALYSIS:"
+    reportData.Add "ATTRIBUTE DIFFERENCES (for matched keys):"
     reportData.Add "================================================================"
     reportData.Add ""
     
-    ' Compare matching rows
-    Dim minRows As Long: minRows = IIf(rows1 < rows2, rows1, rows2)
-    
-    For i = 2 To minRows
-        For j = 1 To cols
-            Dim val1 As Variant, val2 As Variant
-            val1 = ws1.Cells(i, j).Value
-            val2 = ws2.Cells(i, j).Value
-            
-            If Not (IsEmpty(val1) And IsEmpty(val2)) Then
-                If val1 <> val2 Then
-                    changedCount = changedCount + 1
-                    If changedCount <= 10 Then ' Show first 10 changes
-                        Dim colName As String
-                        colName = ws1.Cells(1, j).Value
-                        changedValues.Add "Row " & i & ", Column '" & colName & "': " & val1 & " → " & val2
-                    End If
+    For i = 1 To matchedRecords.Count
+        matchInfo = matchedRecords(i)
+        
+        ' Parse match info
+        row1 = CLng(Mid(matchInfo, InStr(matchInfo, "File1_Row=") + 10, InStr(matchInfo, "|File2_Row") - (InStr(matchInfo, "File1_Row=") + 10)))
+        row2 = CLng(Mid(matchInfo, InStr(matchInfo, "File2_Row=") + 10, InStr(matchInfo, "|Key") - (InStr(matchInfo, "File2_Row=") + 10)))
+        
+        ' Get attribute values
+        Set attrs1 = GetAttributeValues(ws1, row1)
+        Set attrs2 = GetAttributeValues(ws2, row2)
+        
+        ' Compare attributes
+        Dim hasChanges As Boolean: hasChanges = False
+        For k = 1 To attrs1.Count
+            If CStr(attrs1(k)) <> CStr(attrs2(k)) Then
+                hasChanges = True
+                diffCount = diffCount + 1
+                If diffCount <= 20 Then
+                    Dim keyVal As String
+                    keyVal = Mid(matchInfo, InStr(matchInfo, "Key=") + 4)
+                    attributeDifferences.Add "Key: " & keyVal & " | " & attributeColumnNames(k - 1) & ": '" & attrs1(k) & "' → '" & attrs2(k) & "'"
                 End If
             End If
-        Next j
+        Next k
     Next i
     
-    reportData.Add "Total Changed Values: " & changedCount
-    For i = 1 To changedValues.Count
-        reportData.Add "  " & changedValues(i)
+    reportData.Add "Total Attribute Differences: " & diffCount
+    For i = 1 To attributeDifferences.Count
+        reportData.Add "  " & attributeDifferences(i)
     Next i
-    If changedCount > 10 Then
-        reportData.Add "  ... and " & (changedCount - 10) & " more changes"
+    If diffCount > 20 Then
+        reportData.Add "  ... and " & (diffCount - 20) & " more differences"
     End If
     
     reportData.Add ""
@@ -350,9 +431,8 @@ Private Sub FindChangedValues()
 End Sub
 
 Private Function GetColumnHeaders(ws As Worksheet) As Collection
-    '
+    
     ' Get all column headers from first row
-    '
     
     Dim result As New Collection
     Dim col As Long
@@ -368,26 +448,9 @@ Private Function GetColumnHeaders(ws As Worksheet) As Collection
     Set GetColumnHeaders = result
 End Function
 
-Private Function GetRowData(ws As Worksheet, rowNum As Long) As String
-    '
-    ' Get concatenated row data as string
-    '
-    
-    Dim col As Long
-    Dim lastCol As Long: lastCol = GetLastColumn(ws)
-    Dim rowData As String: rowData = ""
-    
-    For col = 1 To lastCol
-        rowData = rowData & "|" & CStr(ws.Cells(rowNum, col).Value)
-    Next col
-    
-    GetRowData = rowData
-End Function
-
 Private Function GetLastRow(ws As Worksheet) As Long
-    '
+    
     ' Find last row with data
-    '
     
     Dim lastRow As Long
     On Error Resume Next
@@ -397,9 +460,8 @@ Private Function GetLastRow(ws As Worksheet) As Long
 End Function
 
 Private Function GetLastColumn(ws As Worksheet) As Long
-    '
+    
     ' Find last column with data
-    '
     
     Dim lastCol As Long
     On Error Resume Next
@@ -409,9 +471,8 @@ Private Function GetLastColumn(ws As Worksheet) As Long
 End Function
 
 Private Sub GenerateSummaryReport(outputPath As String)
-    '
+    
     ' Generate summary report and save to file
-    '
     
     Dim fso As Object
     Dim file As Object
@@ -422,7 +483,7 @@ Private Sub GenerateSummaryReport(outputPath As String)
     
     ' Write header
     file.WriteLine "================================================================================"
-    file.WriteLine "XLS FILE COMPARISON REPORT"
+    file.WriteLine "XLS FILE COMPARISON REPORT (KEY-BASED MATCHING)"
     file.WriteLine "================================================================================"
     file.WriteLine "Generated: " & Now
     file.WriteLine ""
@@ -440,7 +501,7 @@ Private Sub GenerateSummaryReport(outputPath As String)
     ' Write summary
     file.WriteLine "SUMMARY:"
     file.WriteLine "================================================================================"
-    file.WriteLine "Comparison Complete - Review details above"
+    file.WriteLine "Key-based comparison complete - Review details above"
     file.WriteLine "================================================================================"
     
     file.Close
@@ -448,17 +509,16 @@ Private Sub GenerateSummaryReport(outputPath As String)
     Set fso = Nothing
     
     MsgBox "Summary report saved to:" & vbCrLf & outputPath, vbInformation, "Report Saved"
-    
 End Sub
 
 Private Sub ExportDetailedReport()
-    '
+    
     ' Export detailed report to Excel sheet
-    '
     
     Dim newWb As Workbook
     Dim newWs As Worksheet
     Dim row As Long
+    Dim i As Long
     
     Set newWb = Workbooks.Add
     Set newWs = newWb.Sheets(1)
@@ -466,12 +526,12 @@ Private Sub ExportDetailedReport()
     
     ' Add report data
     row = 1
-    newWs.Cells(row, 1).Value = "Comparison Report"
+    newWs.Cells(row, 1).Value = "Key-Based Comparison Report"
+    newWs.Cells(row, 1).Font.Bold = True
     row = row + 1
     newWs.Cells(row, 1).Value = "Generated: " & Now
     row = row + 3
     
-    Dim i As Long
     For i = 1 To reportData.Count
         newWs.Cells(row, 1).Value = reportData(i)
         row = row + 1
@@ -480,7 +540,6 @@ Private Sub ExportDetailedReport()
     newWs.Columns(1).AutoFit
     newWb.SaveAs ThisWorkbook.Path & "\comparison_detailed.xlsx"
     newWb.Close
-    
 End Sub
 
 '---END CLASS MODULE CODE---
