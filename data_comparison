@@ -1,0 +1,486 @@
+' XLS FILE COMPARATOR - VBA Module
+' Purpose: Compare two XLS files and generate detailed comparison reports
+' Usage: Run CompareXLSFiles() subroutine
+
+Option Explicit
+
+' ============================================================================
+' MAIN SUBROUTINE - START HERE
+' ============================================================================
+
+Sub CompareXLSFiles()
+    '
+    ' Main procedure to compare two XLS files
+    ' Modify file paths before running
+    '
+    
+    Dim file1Path As String
+    Dim file2Path As String
+    Dim outputPath As String
+    
+    ' CONFIGURE THESE PATHS:
+    file1Path = "C:\Users\YourName\Documents\file1.xlsx"
+    file2Path = "C:\Users\YourName\Documents\file2.xlsx"
+    outputPath = "C:\Users\YourName\Documents\comparison_report.txt"
+    
+    ' Run comparison
+    Dim comparator As New XLSComparator
+    comparator.CompareFiles file1Path, file2Path, outputPath
+    
+    MsgBox "Comparison complete! Report saved to:" & vbCrLf & outputPath, vbInformation, "Comparison Complete"
+    
+End Sub
+
+' ============================================================================
+' CLASS MODULE: XLSComparator
+' ============================================================================
+
+' Insert this as a CLASS MODULE (not a standard module)
+' Right-click in Project Explorer > Insert > Class Module > Name it "XLSComparator"
+
+'---BEGIN CLASS MODULE CODE---
+
+Option Explicit
+
+Public file1Path As String
+Public file2Path As String
+Public file1Name As String
+Public file2Name As String
+
+Public wb1 As Workbook
+Public wb2 As Workbook
+Public ws1 As Worksheet
+Public ws2 As Worksheet
+
+Public reportData As New Collection
+Public schemaData As New Collection
+Public missingRowsFile1 As New Collection
+Public missingRowsFile2 As New Collection
+Public changedValues As New Collection
+
+Private Function GetWorkbookName(filePath As String) As String
+    Dim parts() As String
+    parts = Split(filePath, "\")
+    GetWorkbookName = parts(UBound(parts))
+End Function
+
+Public Sub CompareFiles(path1 As String, path2 As String, outputPath As String)
+    '
+    ' Main comparison procedure
+    '
+    
+    On Error GoTo ErrorHandler
+    
+    file1Path = path1
+    file2Path = path2
+    file1Name = GetWorkbookName(path1)
+    file2Name = GetWorkbookName(path2)
+    
+    ' Load files
+    If Not LoadFiles() Then Exit Sub
+    
+    ' Run all comparisons
+    Call CompareSchemas
+    Call CompareDimensions
+    Call FindMissingRows
+    Call FindChangedValues
+    
+    ' Generate reports
+    Call GenerateSummaryReport(outputPath)
+    Call ExportDetailedReport
+    
+    ' Close workbooks
+    wb1.Close False
+    wb2.Close False
+    
+    Exit Sub
+ErrorHandler:
+    MsgBox "Error: " & Err.Description, vbCritical, "Comparison Error"
+End Sub
+
+Private Function LoadFiles() As Boolean
+    '
+    ' Load both XLS files
+    '
+    
+    On Error GoTo ErrorHandler
+    
+    Set wb1 = Workbooks.Open(file1Path)
+    Set ws1 = wb1.Sheets(1)
+    
+    Set wb2 = Workbooks.Open(file2Path)
+    Set ws2 = wb2.Sheets(1)
+    
+    MsgBox "✓ Loaded " & file1Name & vbCrLf & "✓ Loaded " & file2Name, vbInformation, "Files Loaded"
+    LoadFiles = True
+    Exit Function
+    
+ErrorHandler:
+    MsgBox "Error loading files: " & Err.Description, vbCritical, "Load Error"
+    LoadFiles = False
+End Function
+
+Private Sub CompareSchemas()
+    '
+    ' Compare table schemas (columns, data types)
+    '
+    
+    Dim col1 As Long, col2 As Long
+    Dim cols1 As Collection, cols2 As Collection
+    Dim i As Long, j As Long
+    Dim foundCol As Boolean
+    
+    Set cols1 = GetColumnHeaders(ws1)
+    Set cols2 = GetColumnHeaders(ws2)
+    
+    reportData.Add "SCHEMA COMPARISON:"
+    reportData.Add "================================================================"
+    reportData.Add ""
+    
+    ' Common columns
+    reportData.Add "Common Columns: " & cols1.Count
+    For i = 1 To cols1.Count
+        foundCol = False
+        For j = 1 To cols2.Count
+            If cols1(i) = cols2(j) Then
+                foundCol = True
+                Exit For
+            End If
+        Next j
+        If foundCol Then
+            reportData.Add "  - " & cols1(i)
+        End If
+    Next i
+    
+    reportData.Add ""
+    
+    ' Columns only in file 1
+    reportData.Add "Columns only in " & file1Name & ":"
+    For i = 1 To cols1.Count
+        foundCol = False
+        For j = 1 To cols2.Count
+            If cols1(i) = cols2(j) Then
+                foundCol = True
+                Exit For
+            End If
+        Next j
+        If Not foundCol Then
+            reportData.Add "  - " & cols1(i)
+        End If
+    Next i
+    
+    reportData.Add ""
+    
+    ' Columns only in file 2
+    reportData.Add "Columns only in " & file2Name & ":"
+    For i = 1 To cols2.Count
+        foundCol = False
+        For j = 1 To cols1.Count
+            If cols2(i) = cols1(j) Then
+                foundCol = True
+                Exit For
+            End If
+        Next j
+        If Not foundCol Then
+            reportData.Add "  - " & cols2(i)
+        End If
+    Next i
+    
+    reportData.Add ""
+    
+End Sub
+
+Private Sub CompareDimensions()
+    '
+    ' Compare table dimensions (rows and columns)
+    '
+    
+    Dim rows1 As Long, rows2 As Long
+    Dim cols1 As Long, cols2 As Long
+    
+    rows1 = GetLastRow(ws1)
+    rows2 = GetLastRow(ws2)
+    cols1 = GetLastColumn(ws1)
+    cols2 = GetLastColumn(ws2)
+    
+    reportData.Add "DIMENSIONS COMPARISON:"
+    reportData.Add "================================================================"
+    reportData.Add ""
+    reportData.Add file1Name & " Rows: " & rows1
+    reportData.Add file2Name & " Rows: " & rows2
+    reportData.Add "Row Difference: " & (rows2 - rows1)
+    reportData.Add ""
+    reportData.Add file1Name & " Columns: " & cols1
+    reportData.Add file2Name & " Columns: " & cols2
+    reportData.Add "Column Difference: " & (cols2 - cols1)
+    reportData.Add ""
+    
+End Sub
+
+Private Sub FindMissingRows()
+    '
+    ' Find rows that exist in one file but not the other
+    '
+    
+    Dim i As Long, j As Long
+    Dim row1Data As String, row2Data As String
+    Dim found As Boolean
+    Dim rows1 As Long, rows2 As Long
+    
+    rows1 = GetLastRow(ws1)
+    rows2 = GetLastRow(ws2)
+    
+    reportData.Add "MISSING ROWS ANALYSIS:"
+    reportData.Add "================================================================"
+    reportData.Add ""
+    
+    ' Find rows only in file1
+    Dim countFile1Only As Long: countFile1Only = 0
+    For i = 2 To rows1
+        row1Data = GetRowData(ws1, i)
+        found = False
+        For j = 2 To rows2
+            row2Data = GetRowData(ws2, j)
+            If row1Data = row2Data Then
+                found = True
+                Exit For
+            End If
+        Next j
+        If Not found Then
+            countFile1Only = countFile1Only + 1
+            If countFile1Only <= 5 Then ' Show first 5
+                missingRowsFile1.Add "Row " & i & ": " & row1Data
+            End If
+        End If
+    Next i
+    
+    ' Find rows only in file2
+    Dim countFile2Only As Long: countFile2Only = 0
+    For j = 2 To rows2
+        row2Data = GetRowData(ws2, j)
+        found = False
+        For i = 2 To rows1
+            row1Data = GetRowData(ws1, i)
+            If row1Data = row2Data Then
+                found = True
+                Exit For
+            End If
+        Next i
+        If Not found Then
+            countFile2Only = countFile2Only + 1
+            If countFile2Only <= 5 Then ' Show first 5
+                missingRowsFile2.Add "Row " & j & ": " & row2Data
+            End If
+        End If
+    Next j
+    
+    reportData.Add "Rows only in " & file1Name & ": " & countFile1Only
+    For i = 1 To missingRowsFile1.Count
+        reportData.Add "  " & missingRowsFile1(i)
+    Next i
+    If countFile1Only > 5 Then
+        reportData.Add "  ... and " & (countFile1Only - 5) & " more"
+    End If
+    
+    reportData.Add ""
+    
+    reportData.Add "Rows only in " & file2Name & ": " & countFile2Only
+    For i = 1 To missingRowsFile2.Count
+        reportData.Add "  " & missingRowsFile2(i)
+    Next i
+    If countFile2Only > 5 Then
+        reportData.Add "  ... and " & (countFile2Only - 5) & " more"
+    End If
+    
+    reportData.Add ""
+    
+End Sub
+
+Private Sub FindChangedValues()
+    '
+    ' Find rows with changed values
+    '
+    
+    Dim i As Long, j As Long, k As Long
+    Dim rows1 As Long, rows2 As Long
+    Dim cols As Long
+    Dim changedCount As Long: changedCount = 0
+    Dim row1Data As String, row2Data As String
+    
+    rows1 = GetLastRow(ws1)
+    rows2 = GetLastRow(ws2)
+    cols = GetLastColumn(ws1)
+    
+    reportData.Add "CHANGED VALUES ANALYSIS:"
+    reportData.Add "================================================================"
+    reportData.Add ""
+    
+    ' Compare matching rows
+    Dim minRows As Long: minRows = IIf(rows1 < rows2, rows1, rows2)
+    
+    For i = 2 To minRows
+        For j = 1 To cols
+            Dim val1 As Variant, val2 As Variant
+            val1 = ws1.Cells(i, j).Value
+            val2 = ws2.Cells(i, j).Value
+            
+            If Not (IsEmpty(val1) And IsEmpty(val2)) Then
+                If val1 <> val2 Then
+                    changedCount = changedCount + 1
+                    If changedCount <= 10 Then ' Show first 10 changes
+                        Dim colName As String
+                        colName = ws1.Cells(1, j).Value
+                        changedValues.Add "Row " & i & ", Column '" & colName & "': " & val1 & " → " & val2
+                    End If
+                End If
+            End If
+        Next j
+    Next i
+    
+    reportData.Add "Total Changed Values: " & changedCount
+    For i = 1 To changedValues.Count
+        reportData.Add "  " & changedValues(i)
+    Next i
+    If changedCount > 10 Then
+        reportData.Add "  ... and " & (changedCount - 10) & " more changes"
+    End If
+    
+    reportData.Add ""
+    
+End Sub
+
+Private Function GetColumnHeaders(ws As Worksheet) As Collection
+    '
+    ' Get all column headers from first row
+    '
+    
+    Dim result As New Collection
+    Dim col As Long
+    Dim lastCol As Long: lastCol = GetLastColumn(ws)
+    
+    For col = 1 To lastCol
+        Dim headerVal As Variant: headerVal = ws.Cells(1, col).Value
+        If Not IsEmpty(headerVal) Then
+            result.Add CStr(headerVal)
+        End If
+    Next col
+    
+    Set GetColumnHeaders = result
+End Function
+
+Private Function GetRowData(ws As Worksheet, rowNum As Long) As String
+    '
+    ' Get concatenated row data as string
+    '
+    
+    Dim col As Long
+    Dim lastCol As Long: lastCol = GetLastColumn(ws)
+    Dim rowData As String: rowData = ""
+    
+    For col = 1 To lastCol
+        rowData = rowData & "|" & CStr(ws.Cells(rowNum, col).Value)
+    Next col
+    
+    GetRowData = rowData
+End Function
+
+Private Function GetLastRow(ws As Worksheet) As Long
+    '
+    ' Find last row with data
+    '
+    
+    Dim lastRow As Long
+    On Error Resume Next
+    lastRow = ws.Cells.SpecialCells(xlCellTypeLastCell).Row
+    On Error GoTo 0
+    GetLastRow = lastRow
+End Function
+
+Private Function GetLastColumn(ws As Worksheet) As Long
+    '
+    ' Find last column with data
+    '
+    
+    Dim lastCol As Long
+    On Error Resume Next
+    lastCol = ws.Cells.SpecialCells(xlCellTypeLastCell).Column
+    On Error GoTo 0
+    GetLastColumn = lastCol
+End Function
+
+Private Sub GenerateSummaryReport(outputPath As String)
+    '
+    ' Generate summary report and save to file
+    '
+    
+    Dim fso As Object
+    Dim file As Object
+    Dim i As Long
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set file = fso.CreateTextFile(outputPath, True)
+    
+    ' Write header
+    file.WriteLine "================================================================================"
+    file.WriteLine "XLS FILE COMPARISON REPORT"
+    file.WriteLine "================================================================================"
+    file.WriteLine "Generated: " & Now
+    file.WriteLine ""
+    file.WriteLine "FILE INFORMATION:"
+    file.WriteLine "--------------------------------------------------------------------------------"
+    file.WriteLine "File 1: " & file1Name
+    file.WriteLine "File 2: " & file2Name
+    file.WriteLine ""
+    
+    ' Write report data
+    For i = 1 To reportData.Count
+        file.WriteLine reportData(i)
+    Next i
+    
+    ' Write summary
+    file.WriteLine "SUMMARY:"
+    file.WriteLine "================================================================================"
+    file.WriteLine "Comparison Complete - Review details above"
+    file.WriteLine "================================================================================"
+    
+    file.Close
+    Set file = Nothing
+    Set fso = Nothing
+    
+    MsgBox "Summary report saved to:" & vbCrLf & outputPath, vbInformation, "Report Saved"
+    
+End Sub
+
+Private Sub ExportDetailedReport()
+    '
+    ' Export detailed report to Excel sheet
+    '
+    
+    Dim newWb As Workbook
+    Dim newWs As Worksheet
+    Dim row As Long
+    
+    Set newWb = Workbooks.Add
+    Set newWs = newWb.Sheets(1)
+    newWs.Name = "Comparison Report"
+    
+    ' Add report data
+    row = 1
+    newWs.Cells(row, 1).Value = "Comparison Report"
+    row = row + 1
+    newWs.Cells(row, 1).Value = "Generated: " & Now
+    row = row + 3
+    
+    Dim i As Long
+    For i = 1 To reportData.Count
+        newWs.Cells(row, 1).Value = reportData(i)
+        row = row + 1
+    Next i
+    
+    newWs.Columns(1).AutoFit
+    newWb.SaveAs ThisWorkbook.Path & "\comparison_detailed.xlsx"
+    newWb.Close
+    
+End Sub
+
+'---END CLASS MODULE CODE---
