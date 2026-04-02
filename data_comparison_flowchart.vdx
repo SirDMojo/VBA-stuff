@@ -1,20 +1,25 @@
-<?xml version="1.0"?>
-<VisioDocument xmlns="http://schemas.microsoft.com/visio/2003">
-    <Page>
-        <Shapes>
-            <Shape id="1" type="oval" label="Start" />
-            <Shape id="2" type="rectangle" label="Process Step 1" />
-            <Shape id="3" type="diamond" label="Decision Point 1" color="yellow" />
-            <Shape id="4" type="rectangle" label="Process Step 2" />
-            <Shape id="5" type="oval" label="End" />
-            <!-- Additional shapes and connections here -->
-        </Shapes>
-        <Connectors>
-            <Connector from="1" to="2" />
-            <Connector from="2" to="3" />
-            <Connector from="3" to="4" />
-            <Connector from="4" to="5" />
-            <!-- Additional connectors here -->
-        </Connectors>
+<?xml version="1.0" encoding="UTF-8"?>
+<VisioDocument>
+  <Pages>
+    <Page name="Data Comparison Workflow">
+      <Shapes>
+        <Shape id="1" type="oval" fill="green" label="Start" />
+        <Shape id="2" type="rectangle" label="Load Data" />
+        <Shape id="3" type="diamond" fill="yellow" label="Data Valid?" />
+        <Shape id="4" type="rectangle" label="Process Data" />
+        <Shape id="5" type="diamond" fill="yellow" label="Errors Found?" />
+        <Shape id="6" type="rectangle" fill="red" label="Log Errors" />
+        <Shape id="7" type="rectangle" label="Generate Report" />
+      </Shapes>
+      <Connectors>
+        <Connector from="1" to="2" />
+        <Connector from="2" to="3" />
+        <Connector from="3" to="4" />
+        <Connector from="4" to="5" />
+        <Connector from="5" to="6" condition="Yes" />
+        <Connector from="5" to="7" condition="No" />
+        <Connector from="6" to="7" />
+      </Connectors>
     </Page>
+  </Pages>
 </VisioDocument>
